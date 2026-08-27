@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RaktaSetu — NSS Blood Donor Network</title>
+
+<!-- Fonts: Space Grotesk for headlines (technical/medical-monitor feel),
+     Inter for body copy, JetBrains Mono for numbers/data (distance, counts) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+<!-- React + ReactDOM + Babel (lets the browser understand JSX directly, no build step needed) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  /* ============================================================
+     DESIGN TOKENS
+     ink    = near-navy-black text/background (not pure black — softer)
+     blood  = the brand's core red (deep, clinical, not neon)
+     pulse  = brighter red used ONLY for live/urgent things
+     paper  = cool light background (deliberately NOT warm cream,
+              to steer away from the generic AI-design look)
+     line   = hairline border colour
+     ============================================================ */
+  :root {
+    --ink: #14161F;
+    --ink-soft: #454A5E;
+    --blood: #B21030;
+    --pulse: #FF4B5C;
+    --paper: #F4F5F9;
+    --panel: #FFFFFF;
+    --line: #DCDFE8;
+    --success: #1E7A4C;
+    --success-soft: #E4F5EC;
+    --muted: #767C93;
+    --radius: 14px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, .display {
+    font-family: 'Space Grotesk', sans-serif;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  button { font-family: inherit; cursor: pointer; }
+  input, select { font-family: inherit; }
+
+  /* ---------- Layout shells ---------- */
+  .shell { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  .topbar {
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .topbar-inner {
+    max-width: 960px; margin: 0 auto; padding: 16px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: var(--blood);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .brand-mark svg { width: 16px; height: 16px; }
+  .brand-name { font-size: 18px; font-weight: 700; }
+  .brand-sub { font-size: 11px; color: var(--muted); margin-top: -2px; }
+  .nav-link {
+    background: none; border: none; color: var(--ink-soft);
+    font-size: 14px; font-weight: 600; padding: 8px 14px; border-radius: 8px;
+  }
+  .nav-link:hover { background: var(--paper); }
+
+  /* ---------- Heartbeat divider (signature motif) ---------- */
+  .heartbeat-wrap { width: 100%; overflow: hidden; height: 46px; margin: 6px 0 28px; }
+  .heartbeat-line {
+    width: 200%; height: 46px;
+    stroke: var(--blood); stroke-width: 2; fill: none;
+    animation: beat-scroll 5.5s linear infinite;
+  }
+  @keyframes beat-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 56px 0 40px; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700;
+    color: var(--blood); text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .eyebrow-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pulse); animation: dotpulse 1.4s ease-in-out infinite; }
+  @keyframes dotpulse { 0%,100% { opacity: 1; transform: scale(1);} 50% { opacity: .35; transform: scale(1.4);} }
+  .hero h1 { font-size: 42px; line-height: 1.08; margin-top: 14px; max-width: 620px; }
+  .hero p.lead { color: var(--ink-soft); font-size: 16px; max-width: 520px; margin-top: 14px; line-height: 1.55; }
+
+  .role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
+  @media (max-width: 640px) { .role-grid { grid-template-columns: 1fr; } .hero h1 { font-size: 32px; } }
+
+  .role-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 26px; text-align: left; transition: border-color .15s, transform .15s;
+  }
+  .role-card:hover { border-color: var(--blood); transform: translateY(-2px); }
+  .role-card .tag { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .role-card h3 { font-size: 20px; margin-top: 8px; }
+  .role-card p { color: var(--ink-soft); font-size: 14px; margin-top: 8px; line-height: 1.5; }
+  .role-card .go { margin-top: 16px; font-weight: 700; color: var(--blood); font-size: 14px; }
+
+  /* ---------- Cards / Panels ---------- */
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 28px; margin-bottom: 20px;
+  }
+  .panel-title { font-size: 20px; margin-bottom: 4px; }
+  .panel-sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 12px; font-weight: 700; color: var(--ink-soft); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; }
+  .field input, .field select {
+    width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px;
+    font-size: 14px; background: var(--paper); color: var(--ink);
+  }
+  .field input:focus, .field select:focus { outline: 2px solid var(--blood); outline-offset: 1px; border-color: var(--blood); }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 560px) { .field-row { grid-template-columns: 1fr; } }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 12px 20px; border-radius: 9px; border: none; font-weight: 700; font-size: 14px;
+  }
+  .btn-primary { background: var(--blood); color: white; width: 100%; }
+  .btn-primary:hover { background: #8f0d26; }
+  .btn-primary:disabled { background: var(--muted); cursor: not-allowed; }
+  .btn-ghost { background: none; border: 1px solid var(--line); color: var(--ink); }
+  .btn-accept { background: var(--success); color: white; }
+  .btn-decline { background: none; border: 1px solid var(--line); color: var(--ink-soft); }
+  .btn-small { padding: 8px 14px; font-size: 13px; }
+
+  .error-msg { background: #FCE9EA; border: 1px solid #F1B4BB; color: var(--blood); padding: 10px 14px; border-radius: 9px; font-size: 13px; margin-bottom: 16px; }
+  .success-msg { background: var(--success-soft); border: 1px solid #B7DFC8; color: var(--success); padding: 10px 14px; border-radius: 9px; font-size: 13px; margin-bottom: 16px; }
+
+  /* ---------- Radar / search-radius signature element ---------- */
+  .radar-wrap { display: flex; flex-direction: column; align-items: center; padding: 30px 0 10px; }
+  .radar { position: relative; width: 160px; height: 160px; }
+  .radar-ring {
+    position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--blood);
+    opacity: 0; animation: radar-pulse 2.4s ease-out infinite;
+  }
+  .radar-ring:nth-child(2) { animation-delay: .8s; }
+  .radar-ring:nth-child(3) { animation-delay: 1.6s; }
+  @keyframes radar-pulse { 0% { transform: scale(.2); opacity: .85; } 100% { transform: scale(1); opacity: 0; } }
+  .radar-center {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 54px; height: 54px; border-radius: 50%; background: var(--blood);
+    display: flex; align-items: center; justify-content: center; color: white;
+  }
+  .radar-caption { margin-top: 14px; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--ink-soft); text-align: center; }
+
+  /* ---------- Alert / donor list rows ---------- */
+  .alert-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 16px; border: 1px solid var(--line); border-radius: 11px; margin-bottom: 10px;
+    background: var(--panel);
+  }
+  .alert-row.status-accepted { border-color: var(--success); background: var(--success-soft); }
+  .alert-row.status-declined { opacity: .5; }
+  .alert-main { display: flex; flex-direction: column; gap: 3px; }
+  .alert-title { font-weight: 700; font-size: 14.5px; }
+  .alert-meta { font-size: 12.5px; color: var(--muted); }
+  .badge { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 20px; }
+  .badge-critical { background: #FCE9EA; color: var(--blood); }
+  .badge-high { background: #FFF2DE; color: #A15C00; }
+  .badge-normal { background: #EAF0FE; color: #2955C9; }
+  .distance-chip { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; font-weight: 700; color: var(--ink-soft); white-space: nowrap; }
+
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); }
+  .empty-state svg { margin-bottom: 12px; opacity: .5; }
+
+  .footer-note { text-align: center; color: var(--muted); font-size: 12px; padding: 30px 0 50px; }
+  .link-btn { background: none; border: none; color: var(--blood); font-weight: 700; font-size: 13px; padding: 0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+/* =============================================================
+   Static reference data
+   ============================================================= */
+const BLOOD_GROUPS = ["O-", "O+", "A-", "A+", "B-", "B+", "AB-", "AB+"];
+
+// Preset cities so this can be demoed instantly without typing GPS
+// coordinates by hand. "Use my current location" (via the browser's
+// geolocation API) is also offered, and any field can be edited manually.
+const PRESET_CITIES = [
+  { name: "Warangal, Telangana",    lat: 17.9689, lng: 79.5941 },
+  { name: "Hanamkonda, Telangana",  lat: 18.0002, lng: 79.5800 },
+  { name: "Hyderabad, Telangana",   lat: 17.3850, lng: 78.4867 },
+  { name: "Khammam, Telangana",     lat: 17.2473, lng: 80.1514 },
+  { name: "Karimnagar, Telangana",  lat: 18.4386, lng: 79.1288 },
+  { name: "Nizamabad, Telangana",   lat: 18.6725, lng: 78.0941 },
+  { name: "Vijayawada, AP",         lat: 16.5062, lng: 80.6480 },
+  { name: "Bengaluru, Karnataka",   lat: 12.9716, lng: 77.5946 },
+];
+
+/* =============================================================
+   Small reusable pieces
+   ============================================================= */
+function HeartbeatDivider() {
+  // A single ECG "blip" shape, drawn twice side by side and scrolled
+  // leftwards forever -> reads as an infinite heart-monitor line.
+  const path = "M0,23 L60,23 L75,23 L85,4 L95,42 L105,23 L120,23 L400,23 " +
+               "L460,23 L475,23 L485,4 L495,42 L505,23 L520,23 L800,23";
+  return (
+    <div className="heartbeat-wrap">
+      <svg className="heartbeat-line" viewBox="0 0 800 46" preserveAspectRatio="none">
+        <path d={path} />
+      </svg>
+    </div>
+  );
+}
+
+function DropIcon({ color = "white", size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <path d="M12 2C12 2 5 11.5 5 16a7 7 0 0 0 14 0C19 11.5 12 2 12 2z" />
+    </svg>
+  );
+}
+
+function UrgencyBadge({ level }) {
+  const cls = level === "Critical" ? "badge-critical" : level === "Normal" ? "badge-normal" : "badge-high";
+  return <span className={`badge ${cls}`}>{level}</span>;
+}
+
+function LocationPicker({ locationName, setLocationName, lat, setLat, lng, setLng }) {
+  const [usingGeo, setUsingGeo] = useState(false);
+
+  const applyPreset = (e) => {
+    const city = PRESET_CITIES.find(c => c.name === e.target.value);
+    if (city) { setLocationName(city.name); setLat(city.lat); setLng(city.lng); }
+  };
+
+  const useDeviceLocation = () => {
+    if (!navigator.geolocation) return;
+    setUsingGeo(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLat(pos.coords.latitude.toFixed(4));
+        setLng(pos.coords.longitude.toFixed(4));
+        setLocationName(locationName || "Current location");
+        setUsingGeo(false);
+      },
+      () => setUsingGeo(false)
+    );
+  };
+
+  return (
+    <div>
+      <div className="field">
+        <label>Location</label>
+        <select onChange={applyPreset} defaultValue="">
+          <option value="" disabled>Pick a nearby city (or enter manually below)</option>
+          {PRESET_CITIES.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+        </select>
+      </div>
+      <div className="field-row">
+        <div className="field">
+          <label>Location name</label>
+          <input value={locationName} onChange={e => setLocationName(e.target.value)} placeholder="Area / landmark" />
+        </div>
+        <div className="field">
+          <label>&nbsp;</label>
+          <button type="button" className="btn btn-ghost" style={{width:"100%"}} onClick={useDeviceLocation}>
+            {usingGeo ? "Locating…" : "📍 Use my current location"}
+          </button>
+        </div>
+      </div>
+      <div className="field-row">
+        <div className="field">
+          <label>Latitude</label>
+          <input type="number" step="0.0001" value={lat} onChange={e => setLat(e.target.value)} placeholder="17.9689" />
+        </div>
+        <div className="field">
+          <label>Longitude</label>
+          <input type="number" step="0.0001" value={lng} onChange={e => setLng(e.target.value)} placeholder="79.5941" />
+        </div>
+      </div>
+      <p className="hint">Matching only alerts donors within 30 km of this point.</p>
+    </div>
+  );
+}
+
+/* =============================================================
+   Top bar
+   ============================================================= */
+function TopBar({ go, donor }) {
+  return (
+    <div className="topbar">
+      <div className="topbar-inner">
+        <div className="brand" style={{cursor:"pointer"}} onClick={() => go("landing")}>
+          <div className="brand-mark"><DropIcon /></div>
+          <div>
+            <div className="brand-name">RaktaSetu</div>
+            <div className="brand-sub">NSS Blood Donor Network</div>
+          </div>
+        </div>
+        <div>
+          {donor
+            ? <button className="nav-link" onClick={() => go("donorDashboard")}>Hi, {donor.name.split(" ")[0]} →</button>
+            : <button className="nav-link" onClick={() => go("donorLogin")}>Donor login</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =============================================================
+   LANDING
+   ============================================================= */
+function Landing({ go }) {
+  return (
+    <div className="shell hero">
+      <span className="eyebrow"><span className="eyebrow-dot"></span> Live matching · 30 km radius</span>
+      <h1>Bridging blood donors to patients who need them, right now.</h1>
+      <p className="lead">
+        NSS volunteers and registered donors list their blood group and location once.
+        When a patient's hospital posts an emergency requirement, every compatible
+        donor within 30 km is alerted instantly to respond.
+      </p>
+      <HeartbeatDivider />
+      <div className="role-grid">
+        <div className="role-card" onClick={() => go("donorRegister")}>
+          <div className="tag">Step 01 — Donor / NSS Volunteer</div>
+          <h3>Register as a donor</h3>
+          <p>Share your blood group, platelet count and location once. Get alerted only when someone nearby genuinely needs your group.</p>
+          <div className="go">Register →</div>
+        </div>
+        <div className="role-card" onClick={() => go("patientRequest")}>
+          <div className="tag">Step 02 — Patient / Hospital</div>
+          <h3>Request blood urgently</h3>
+          <p>Post the blood group, hospital and location. Compatible donors within 30 km are alerted immediately.</p>
+          <div className="go">Raise a request →</div>
+        </div>
+      </div>
+      <p className="footer-note">Already registered as a donor? <button className="link-btn" onClick={() => go("donorLogin")}>Log in here</button></p>
+    </div>
+  );
+}
+
+/* =============================================================
+   DONOR REGISTER
+   ============================================================= */
+function DonorRegister({ go, onLoggedIn }) {
+  const [form, setForm] = useState({
+    name: "", mobile: "", email: "", password: "",
+    blood_group: "O+", platelet_count: "", is_nss_volunteer: false,
+  });
+  const [locationName, setLocationName] = useState("");
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!locationName || !lat || !lng) { setError("Please pick or enter your location."); return; }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/donor/register", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, location_name: locationName, latitude: parseFloat(lat), longitude: parseFloat(lng) }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Registration failed"); setLoading(false); return; }
+
+      // Log straight in after registering
+      const loginRes = await fetch("/api/donor/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mobile: form.mobile, password: form.password }),
+      });
+      const donor = await loginRes.json();
+      onLoggedIn(donor);
+      go("donorDashboard");
+    } catch (err) {
+      setError("Could not reach the server. Is app.py running?");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="shell" style={{ paddingTop: 36, maxWidth: 560 }}>
+      <button className="link-btn" onClick={() => go("landing")}>← Back</button>
+      <div className="panel" style={{ marginTop: 16 }}>
+        <h2 className="panel-title">Register as a donor</h2>
+        <p className="panel-sub">Takes under a minute. You'll only be alerted for genuine, compatible, nearby emergencies.</p>
+        {error && <div className="error-msg">{error}</div>}
+        <form onSubmit={submit}>
+          <div className="field"><label>Full name</label><input required value={form.name} onChange={set("name")} placeholder="G. Gowtham" /></div>
+          <div className="field-row">
+            <div className="field"><label>Mobile number</label><input required value={form.mobile} onChange={set("mobile")} placeholder="9876543210" /></div>
+            <div className="field"><label>Email (optional)</label><input type="email" value={form.email} onChange={set("email")} placeholder="you@example.com" /></div>
+          </div>
+          <div className="field"><label>Password</label><input required type="password" value={form.password} onChange={set("password")} placeholder="Choose a password" /></div>
+          <div className="field-row">
+            <div className="field">
+              <label>Blood group</label>
+              <select value={form.blood_group} onChange={set("blood_group")}>
+                {BLOOD_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Platelet count (optional)</label><input value={form.platelet_count} onChange={set("platelet_count")} placeholder="e.g. 250000" /></div>
+          </div>
+          <div className="field" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input type="checkbox" style={{ width: "auto" }} checked={form.is_nss_volunteer} onChange={set("is_nss_volunteer")} id="nss" />
+            <label htmlFor="nss" style={{ margin: 0, textTransform: "none", fontSize: 14, fontWeight: 500 }}>I'm registering as an NSS volunteer</label>
+          </div>
+          <LocationPicker locationName={locationName} setLocationName={setLocationName} lat={lat} setLat={setLat} lng={lng} setLng={setLng} />
+          <button className="btn btn-primary" style={{ marginTop: 6 }} disabled={loading}>{loading ? "Registering…" : "Register & continue"}</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* =============================================================
+   DONOR LOGIN
+   ============================================================= */
+function DonorLogin({ go, onLoggedIn }) {
+  const [mobile, setMobile] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch("/api/donor/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mobile, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Login failed"); setLoading(false); return; }
+      onLoggedIn(data);
+      go("donorDashboard");
+    } catch { setError("Could not reach the server. Is app.py running?"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="shell" style={{ paddingTop: 36, maxWidth: 420 }}>
+      <button className="link-btn" onClick={() => go("landing")}>← Back</button>
+      <div className="panel" style={{ marginTop: 16 }}>
+        <h2 className="panel-title">Donor login</h2>
+        <p className="panel-sub">Log in to see and respond to alerts near you.</p>
+        {error && <div className="error-msg">{error}</div>}
+        <form onSubmit={submit}>
+          <div className="field"><label>Mobile number</label><input required value={mobile} onChange={e => setMobile(e.target.value)} /></div>
+          <div className="field"><label>Password</label><input required type="password" value={password} onChange={e => setPassword(e.target.value)} /></div>
+          <button className="btn btn-primary" disabled={loading}>{loading ? "Logging in…" : "Log in"}</button>
+        </form>
+        <p className="footer-note" style={{ paddingBottom: 0 }}>New here? <button className="link-btn" onClick={() => go("donorRegister")}>Register as a donor</button></p>
+      </div>
+    </div>
+  );
+}
+
+/* =============================================================
+   DONOR DASHBOARD
+   ============================================================= */
+function DonorDashboard({ go, donor, setDonor }) {
+  const [alerts, setAlerts] = useState([]);
+  const [busyId, setBusyId] = useState(null);
+
+  const loadAlerts = useCallback(async () => {
+    if (!donor) return;
+    const res = await fetch(`/api/donor/${donor.id}/alerts`);
+    setAlerts(await res.json());
+  }, [donor]);
+
+  useEffect(() => {
+    loadAlerts();
+    const t = setInterval(loadAlerts, 5000); // poll every 5s for new emergencies
+    return () => clearInterval(t);
+  }, [loadAlerts]);
+
+  if (!donor) {
+    return (
+      <div className="shell" style={{ paddingTop: 60, textAlign: "center" }}>
+        <p>You need to log in first.</p>
+        <button className="btn btn-primary" style={{ width: "auto" }} onClick={() => go("donorLogin")}>Go to login</button>
+      </div>
+    );
+  }
+
+  const respond = async (alertId, response) => {
+    setBusyId(alertId);
+    await fetch(`/api/alert/${alertId}/respond`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ response }),
+    });
+    await loadAlerts();
+    setBusyId(null);
+  };
+
+  const toggleAvailable = async () => {
+    const next = !donor.available;
+    await fetch(`/api/donor/${donor.id}/availability`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ available: next }),
+    });
+    setDonor({ ...donor, available: next ? 1 : 0 });
+  };
+
+  const pending = alerts.filter(a => a.status === "pending");
+  const past = alerts.filter(a => a.status !== "pending");
+
+  return (
+    <div className="shell" style={{ paddingTop: 30, maxWidth: 640 }}>
+      <div className="panel">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <h2 className="panel-title">{donor.name}</h2>
+            <p className="panel-sub" style={{ marginBottom: 0 }}>
+              {donor.blood_group} · {donor.location_name} {donor.is_nss_volunteer ? "· NSS Volunteer" : ""}
+            </p>
+          </div>
+          <button className={`btn btn-small ${donor.available ? "btn-accept" : "btn-ghost"}`} onClick={toggleAvailable}>
+            {donor.available ? "● Available" : "Paused"}
+          </button>
+        </div>
+      </div>
+
+      <h3 style={{ marginBottom: 12 }}>Pending alerts {pending.length > 0 && <span className="badge badge-critical">{pending.length}</span>}</h3>
+      {pending.length === 0 && (
+        <div className="panel empty-state">No active emergencies matched to you right now. This page checks automatically every few seconds.</div>
+      )}
+      {pending.map(a => (
+        <div key={a.id} className="alert-row">
+          <div className="alert-main">
+            <div className="alert-title">{a.patient_name} needs {a.blood_group_needed} <UrgencyBadge level={a.urgency} /></div>
+            <div className="alert-meta">{a.hospital_name} · {a.location_name} · Contact: {a.contact_mobile}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span className="distance-chip">{a.distance_km} km</span>
+            <button className="btn btn-small btn-accept" disabled={busyId === a.id} onClick={() => respond(a.id, "accepted")}>Accept</button>
+            <button className="btn btn-small btn-decline" disabled={busyId === a.id} onClick={() => respond(a.id, "declined")}>Decline</button>
+          </div>
+        </div>
+      ))}
+
+      {past.length > 0 && (
+        <React.Fragment>
+          <h3 style={{ margin: "24px 0 12px" }}>History</h3>
+          {past.map(a => (
+            <div key={a.id} className={`alert-row status-${a.status}`}>
+              <div className="alert-main">
+                <div className="alert-title">{a.patient_name} · {a.blood_group_needed}</div>
+                <div className="alert-meta">{a.hospital_name} · {a.status}</div>
+              </div>
+              <span className="distance-chip">{a.distance_km} km</span>
+            </div>
+          ))}
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+/* =============================================================
+   PATIENT REQUEST FORM
+   ============================================================= */
+function PatientRequest({ go, setPatientId }) {
+  const [form, setForm] = useState({
+    patient_name: "", blood_group_needed: "O+", units_needed: 1,
+    hospital_name: "", urgency: "Critical", contact_mobile: "",
+  });
+  const [locationName, setLocationName] = useState("");
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!locationName || !lat || !lng) { setError("Please pick or enter the hospital's location."); return; }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/patient/request", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, location_name: locationName, latitude: parseFloat(lat), longitude: parseFloat(lng) }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Could not post the request"); setLoading(false); return; }
+      setPatientId(data.patient_id);
+      go("patientResults");
+    } catch { setError("Could not reach the server. Is app.py running?"); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="shell" style={{ paddingTop: 36, maxWidth: 560 }}>
+      <button className="link-btn" onClick={() => go("landing")}>← Back</button>
+      <div className="panel" style={{ marginTop: 16 }}>
+        <h2 className="panel-title">Post an emergency blood requirement</h2>
+        <p className="panel-sub">Every compatible, available donor within 30 km is alerted the moment you submit this.</p>
+        {error && <div className="error-msg">{error}</div>}
+        <form onSubmit={submit}>
+          <div className="field"><label>Patient name</label><input required value={form.patient_name} onChange={set("patient_name")} /></div>
+          <div className="field-row">
+            <div className="field">
+              <label>Blood group needed</label>
+              <select value={form.blood_group_needed} onChange={set("blood_group_needed")}>
+                {BLOOD_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            <div className="field"><label>Units needed</label><input type="number" min="1" value={form.units_needed} onChange={set("units_needed")} /></div>
+          </div>
+          <div className="field"><label>Hospital name</label><input required value={form.hospital_name} onChange={set("hospital_name")} placeholder="MGM Hospital, Warangal" /></div>
+          <div className="field-row">
+            <div className="field">
+              <label>Urgency</label>
+              <select value={form.urgency} onChange={set("urgency")}>
+                <option>Critical</option><option>High</option><option>Normal</option>
+              </select>
+            </div>
+            <div className="field"><label>Contact mobile</label><input required value={form.contact_mobile} onChange={set("contact_mobile")} placeholder="Attendant's number" /></div>
+          </div>
+          <LocationPicker locationName={locationName} setLocationName={setLocationName} lat={lat} setLat={setLat} lng={lng} setLng={setLng} />
+          <button className="btn btn-primary" style={{ marginTop: 6 }} disabled={loading}>{loading ? "Sending alerts…" : "Send emergency alert"}</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* =============================================================
+   PATIENT RESULTS (radar + live donor responses)
+   ============================================================= */
+function PatientResults({ go, patientId }) {
+  const [alerts, setAlerts] = useState(null);
+
+  const load = useCallback(async () => {
+    if (!patientId) return;
+    const res = await fetch(`/api/patient/${patientId}/alerts`);
+    setAlerts(await res.json());
+  }, [patientId]);
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 4000); // poll for donor responses
+    return () => clearInterval(t);
+  }, [load]);
+
+  if (!patientId) {
+    return (
+      <div className="shell" style={{ paddingTop: 60, textAlign: "center" }}>
+        <p>No active request found.</p>
+        <button className="btn btn-primary" style={{ width: "auto" }} onClick={() => go("patientRequest")}>Post a request</button>
+      </div>
+    );
+  }
+
+  const accepted = (alerts || []).filter(a => a.status === "accepted");
+
+  return (
+    <div className="shell" style={{ paddingTop: 30, maxWidth: 620 }}>
+      <div className="panel">
+        <div className="radar-wrap">
+          <div className="radar">
+            <div className="radar-ring"></div><div className="radar-ring"></div><div className="radar-ring"></div>
+            <div className="radar-center"><DropIcon /></div>
+          </div>
+          <div className="radar-caption">
+            {alerts === null ? "Loading…" : `${alerts.length} matching donor(s) alerted within 30 km`}
+          </div>
+        </div>
+      </div>
+
+      {accepted.length > 0 && (
+        <div className="panel" style={{ borderColor: "var(--success)" }}>
+          <h3 style={{ color: "var(--success)", marginBottom: 10 }}>✓ {accepted.length} donor{accepted.length > 1 ? "s" : ""} accepted</h3>
+          {accepted.map(a => (
+            <div key={a.id} className="alert-row status-accepted">
+              <div className="alert-main">
+                <div className="alert-title">{a.donor_name} ({a.blood_group}{a.is_nss_volunteer ? " · NSS" : ""})</div>
+                <div className="alert-meta">Contact: {a.donor_mobile}</div>
+              </div>
+              <span className="distance-chip">{a.distance_km} km away</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <h3 style={{ margin: "20px 0 12px" }}>All alerted donors</h3>
+      {alerts && alerts.length === 0 && (
+        <div className="panel empty-state">No compatible donors are currently registered within 30 km of this hospital.</div>
+      )}
+      {(alerts || []).map(a => (
+        <div key={a.id} className={`alert-row status-${a.status}`}>
+          <div className="alert-main">
+            <div className="alert-title">{a.donor_name} · {a.blood_group}</div>
+            <div className="alert-meta">Status: {a.status}</div>
+          </div>
+          <span className="distance-chip">{a.distance_km} km</span>
+        </div>
+      ))}
+      <p className="footer-note">This page refreshes automatically as donors respond.</p>
+    </div>
+  );
+}
+
+/* =============================================================
+   ROOT APP — view router (kept simple: one state variable
+   decides which screen is shown, no routing library needed)
+   ============================================================= */
+function App() {
+  const [view, setView] = useState("landing");
+  const [donor, setDonor] = useState(null);
+  const [patientId, setPatientId] = useState(null);
+
+  return (
+    <React.Fragment>
+      <TopBar go={setView} donor={donor} />
+      {view === "landing" && <Landing go={setView} />}
+      {view === "donorRegister" && <DonorRegister go={setView} onLoggedIn={setDonor} />}
+      {view === "donorLogin" && <DonorLogin go={setView} onLoggedIn={setDonor} />}
+      {view === "donorDashboard" && <DonorDashboard go={setView} donor={donor} setDonor={setDonor} />}
+      {view === "patientRequest" && <PatientRequest go={setView} setPatientId={setPatientId} />}
+      {view === "patientResults" && <PatientResults go={setView} patientId={patientId} />}
+    </React.Fragment>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

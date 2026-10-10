@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: rakth-setu
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 1 --threads 4 --timeout 120 app:app
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        sync: false

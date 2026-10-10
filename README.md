@@ -7,8 +7,8 @@ A Flask application connecting patients and blood banks with nearby, blood-compa
 - Email + password registration and sign-in for donors, NSS volunteers, patients/attendants and blood banks. Passwords are hashed; authenticated endpoints use signed, HttpOnly session cookies.
 - Donor/NSS profiles with blood group, availability, contact details and coordinates.
 - Patient and blood-bank requests; donor details remain hidden from the requester until a donor accepts.
-- SPO matching uses great-circle distance (Haversine) and a fixed 20 km radius. The closest match is notified first.
-- If a donor accepts but does not confirm they are on the way within 25 minutes, the server expires that unconfirmed alert and sends a new wave to up to five not-yet-alerted eligible donors. A pending alert also advances after 25 minutes. A decline advances to the next donor immediately.
+- SPO matching uses great-circle distance (Haversine) and a fixed 20 km radius. Every compatible, available donor within 20 km is notified immediately; matches are ranked nearest-first for display.
+- Every eligible donor within 20 km receives the initial alert. If an accepting donor does not confirm they are on the way within 25 minutes, that acceptance expires, remaining pending donors receive an escalation notification, and newly eligible donors are alerted. A decline triggers an immediate search for newly eligible donors.
 - In-app notifications persist in the account notification bar. Real email delivery is available with SendGrid environment variables.
 - SQLite for local development; PostgreSQL via DATABASE_URL for deployment. APScheduler checks escalation deadlines every 30 seconds. The included Procfile runs a single web worker so the scheduler is not duplicated.
 

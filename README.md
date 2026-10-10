@@ -1,86 +1,60 @@
-# RaktaSetu — NSS Blood Donor Network
+# RaktaSetu — Blood Donor Network
 
-A project connecting **blood donors / NSS volunteers** with **patients in
-emergencies**, based on **blood group compatibility** and **live location
-(30 km radius)**.
+A Flask application connecting patients and blood banks with nearby, blood-compatible donors and NSS volunteers. SPO (Smart Proximity Organizer) is a transparent geographic matching engine: it checks blood-group compatibility, filters to a 20 km radius, then ranks donors nearest-first. It is not a generative-AI medical decision system.
 
-## How it works (matches your original idea)
+## What is implemented
 
-1. A donor / NSS volunteer **registers** with their mobile number, blood
-   group, platelet count, and location.
-2. A patient (or hospital attendant) **posts an emergency request**: blood
-   group needed, hospital name, and hospital location.
-3. The server automatically finds every **available, blood-compatible
-   donor within 30 km** and creates an **alert** for each of them.
-4. Donors see the alert on their dashboard (this is the "call/SMS" step —
-   simulated in-app here, since real SMS/calls need a paid Twilio account.
-   See "Going further" below for how to wire that in).
-5. If a donor **accepts**, the patient's screen immediately reveals that
-   donor's name and mobile number so they can be contacted directly.
+- Email + password registration and sign-in for donors, NSS volunteers, patients/attendants and blood banks. Passwords are hashed; authenticated endpoints use signed, HttpOnly session cookies.
+- Donor/NSS profiles with blood group, availability, contact details and coordinates.
+- Patient and blood-bank requests; donor details remain hidden from the requester until a donor accepts.
+- SPO matching uses great-circle distance (Haversine) and a fixed 20 km radius. Every compatible, available donor within 20 km is notified immediately; matches are ranked nearest-first for display.
+- Every eligible donor within 20 km receives the initial alert. If an accepting donor does not confirm they are on the way within 25 minutes, that acceptance expires, remaining pending donors receive an escalation notification, and newly eligible donors are alerted. A decline triggers an immediate search for newly eligible donors.
+- In-app notifications persist in the account notification bar. Real email delivery is available with SendGrid environment variables.
+- SQLite for local development; PostgreSQL via DATABASE_URL for deployment. APScheduler checks escalation deadlines every 30 seconds. The included Procfile runs a single web worker so the scheduler is not duplicated.
 
-## Project structure
+## Run in VS Code
 
-```
-blood-connect/
-├── app.py              Flask server — all API routes
-├── database.py         SQLite table setup + connection helper
-├── matching.py         Distance formula (Haversine) + blood-compatibility rules
-├── requirements.txt    Python packages needed
-├── static/
-│   └── index.html      The entire frontend (React, loaded from a CDN — no build step)
-└── blood_connect.db    Created automatically the first time you run app.py
-```
+Install Python 3.10+ and open this folder in VS Code. In its integrated terminal:
 
-## Running it
+    python -m venv .venv
+    # Windows PowerShell: .venv\Scripts\Activate.ps1
+    # macOS/Linux: source .venv/bin/activate
+    pip install -r requirements.txt
 
-You need **Python 3.8+** installed. Then, from inside this folder:
+Copy .env.example to .env and set a long random SECRET_KEY. Local mode uses SQLite automatically. Then run:
 
-```bash
-pip install -r requirements.txt
-python app.py
-```
+    python app.py
 
-Open your browser at **http://127.0.0.1:5000**
+Open http://127.0.0.1:5000. For a second terminal/browser profile, open an incognito window to test donor and requester accounts at the same time.
 
-That's it — one server serves both the API and the webpage, so there's no
-separate frontend server and no CORS setup needed.
+## Email alerts
 
-## Trying it out end-to-end
+Set SENDGRID_API_KEY and a verified FROM_EMAIL in the hosting provider's secret/environment-variable panel. Never commit credentials or paste them into chat. Without both variables, in-app notifications still work and each notification records email_status: not_configured.
 
-1. Open the app → click **"Register as a donor"**.
-2. Fill the form. Pick a **blood group** and a **city** from the dropdown
-   (or click "Use my current location"). Submit — you're logged straight in.
-3. Open the app in a **second browser tab** (or an incognito window) →
-   click **"Raise a request"**.
-4. Fill in a **compatible blood group** and a **city within 30 km** of the
-   donor you just registered. Submit.
-5. Go back to the **donor's tab** — within ~5 seconds (auto-refresh) you'll
-   see the alert appear. Click **Accept**.
-6. Go back to the **patient's tab** — within ~4 seconds you'll see the
-   donor's name and mobile number appear as "Accepted".
+## Deploy publicly
 
-## The matching logic (matching.py)
+1. Push this source to your GitHub repository (the deployment must have access to it).
+2. Create a PostgreSQL database with your hosting provider and copy its private/internal connection URL into DATABASE_URL.
+3. Create a web service from the repository. The included render.yaml supplies Python build/start commands, health check and environment-variable prompts; choose a PostgreSQL plan with persistence suitable for your event.
+4. Set APP_ENV=production, set a private SECRET_KEY, and configure SENDGRID_API_KEY plus verified FROM_EMAIL for real email. Do not use SQLite on an ephemeral host filesystem for public deployment.
+5. Use an always-on web instance or a separate scheduled worker for the 25-minute timer. Free hosts that sleep while idle can delay escalation until the service wakes up.
+6. After deployment, check /healthz, create test donor and patient/bank accounts, and verify the email provider's delivery logs. A public URL is not created by this repository alone; deploy it in your hosting account.
 
-- **Distance**: uses the Haversine formula to calculate real-world
-  distance in km between the donor's coordinates and the hospital's
-  coordinates (not a flat-map approximation).
-- **Blood compatibility**: uses the real medical donor→recipient chart
-  (e.g. an `O-` donor is alerted for *any* patient, since O- is the
-  universal donor), not just an exact blood-group match.
-- **Radius**: `SEARCH_RADIUS_KM = 30` at the top of `matching.py` — change
-  this one number to widen or narrow the search.
+## Test
 
-## Going further (ideas for your report / viva)
+    pytest -q
 
-- **Real SMS/call alerts**: swap the comment inside
-  `create_patient_request()` in `app.py` for a call to the
-  [Twilio API](https://www.twilio.com/docs/sms/quickstart/python) (free
-  trial account) to actually text or call the donor's mobile number.
-- **Real geocoding**: replace the preset city dropdown with the free
-  [OpenStreetMap Nominatim API](https://nominatim.org/) so users can type
-  any address and get real coordinates.
-- **Auth**: passwords are already hashed with Werkzeug's
-  `generate_password_hash` — for a production app you'd add sessions/JWT
-  tokens instead of returning the donor row directly on login.
-- **NSS admin view**: add a route that lists all NSS-volunteer donors and
-  lets a college NSS coordinator broadcast a bulk donation-camp request.
+The background escalation service must run in exactly one process/instance in this deployment model. The supplied Procfile uses one Gunicorn worker. For a multi-instance production system, move timed escalations to a dedicated worker/queue or a scheduled job with database locking.
+
+## Important real-world limits
+
+This is a deployable hackathon pilot, not a validated clinical or blood-bank inventory system. Accounts are self-registered (including the blood-bank role), email identity is not verified in-app, and donor eligibility/inventory is not clinically validated. Before real emergency reliance, add organization verification, email verification and account recovery, abuse/rate limiting, consent/privacy retention controls, monitoring/backups, and review the blood compatibility workflow with a qualified blood-bank professional. A hospital/clinician must verify compatibility and eligibility before transfusion. The interface recommends contacting the hospital/emergency services.
+
+## Project layout
+
+- app.py — API routes, auth, request flow and 25-minute escalation scheduler
+- database.py — SQLAlchemy models and SQLite/PostgreSQL setup
+- matching.py — SPO compatibility and geographic ranking
+- notifications.py — persistent app notices and optional SendGrid email
+- static/index.html — responsive browser UI
+- tests/ — matching and authenticated end-to-end tests

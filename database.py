@@ -1,92 +1,106 @@
-"""
-database.py
------------
-Everything related to talking to our SQLite database lives here.
-Keeping it in its own file (instead of mixing it into app.py) means
-app.py only has to worry about "what happens when a URL is visited",
-and this file only has to worry about "how do I read/write the data".
-
-SQLite is used because it needs zero setup (no separate database
-server to install) - perfect for a college project / demo.
-"""
-
-import sqlite3          # Python's built-in library for talking to SQLite files
-import os                # used to build a file path that works on any OS
-
-# The .db file will sit right next to this script.
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blood_connect.db")
+"""Persistent SQLAlchemy models for RaktaSetu (SQLite locally, PostgreSQL in production)."""
+from datetime import datetime, timezone
+import os
+from pathlib import Path
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine
+from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 
-def get_connection():
-    """
-    Opens a connection to the database file.
-    row_factory = sqlite3.Row lets us access columns by NAME
-    (e.g. row["blood_group"]) instead of only by position (row[3]),
-    which makes the rest of the code much easier to read.
-    """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")  # enforce donor_id/patient_id links being valid
-    return conn
+def _database_url():
+    url = os.environ.get("DATABASE_URL", "sqlite:///data/blood_connect.db")
+    if url.startswith("postgres://"):
+        url = "postgresql+psycopg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://") and "+" not in url.split(":", 1)[0]:
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    if url.startswith("sqlite:///") and ":memory:" not in url:
+        filename = url[len("sqlite:///"):]
+        Path(filename).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+    return url
+
+
+DATABASE_URL = _database_url()
+_engine_options = {"pool_pre_ping": True}
+if DATABASE_URL.startswith("sqlite"):
+    _engine_options["connect_args"] = {"check_same_thread": False}
+engine = create_engine(DATABASE_URL, **_engine_options)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+class Base(DeclarativeBase):
+    pass
+
+
+def utcnow():
+    """Return a naive UTC timestamp for consistent SQLite/PostgreSQL storage."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+class Account(Base):
+    __tablename__ = "rs_accounts"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), nullable=False)
+    email = Column(String(254), nullable=False, unique=True, index=True)
+    mobile = Column(String(30), nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(24), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    donor_profile = relationship("DonorProfile", back_populates="account", uselist=False, cascade="all, delete-orphan")
+
+class DonorProfile(Base):
+    __tablename__ = "rs_donor_profiles"
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("rs_accounts.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    blood_group = Column(String(3), nullable=False, index=True)
+    platelet_count = Column(Integer)
+    is_nss_volunteer = Column(Boolean, nullable=False, default=False)
+    location_name = Column(String(180), nullable=False)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    available = Column(Boolean, nullable=False, default=True)
+    account = relationship("Account", back_populates="donor_profile")
+
+class PatientRequest(Base):
+    __tablename__ = "rs_patient_requests"
+    id = Column(Integer, primary_key=True)
+    requester_id = Column(Integer, ForeignKey("rs_accounts.id"), nullable=False, index=True)
+    patient_name = Column(String(120), nullable=False)
+    blood_group_needed = Column(String(3), nullable=False)
+    units_needed = Column(Integer, nullable=False, default=1)
+    hospital_name = Column(String(180), nullable=False)
+    location_name = Column(String(180), nullable=False)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    urgency = Column(String(20), nullable=False, default="High")
+    contact_mobile = Column(String(30), nullable=False)
+    status = Column(String(24), nullable=False, default="searching", index=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    alerts = relationship("Alert", back_populates="patient_request", cascade="all, delete-orphan")
+
+class Alert(Base):
+    __tablename__ = "rs_alerts"
+    __table_args__ = (UniqueConstraint("patient_id", "donor_id", name="uq_rs_alert_patient_donor"),)
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("rs_patient_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    donor_id = Column(Integer, ForeignKey("rs_donor_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    distance_km = Column(Float, nullable=False)
+    status = Column(String(24), nullable=False, default="pending", index=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    accepted_at = Column(DateTime)
+    confirmed_at = Column(DateTime)
+    patient_request = relationship("PatientRequest", back_populates="alerts")
+    donor = relationship("DonorProfile")
+
+class Notification(Base):
+    __tablename__ = "rs_notifications"
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("rs_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("rs_patient_requests.id", ondelete="SET NULL"))
+    alert_id = Column(Integer, ForeignKey("rs_alerts.id", ondelete="SET NULL"))
+    title = Column(String(140), nullable=False)
+    body = Column(Text, nullable=False)
+    kind = Column(String(30), nullable=False, default="info")
+    is_read = Column(Boolean, nullable=False, default=False)
+    email_status = Column(String(30), nullable=False, default="not_configured")
+    created_at = Column(DateTime, nullable=False, default=utcnow)
 
 
 def init_db():
-    """
-    Creates the three tables we need, only if they don't already exist.
-    Called once when the Flask app starts up.
-    """
-    conn = get_connection()
-    cur = conn.cursor()
-
-    # ---- DONORS (this also covers NSS volunteers who register as donors) ----
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS donors (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            name            TEXT NOT NULL,
-            mobile          TEXT NOT NULL UNIQUE,   -- used as the login username
-            email           TEXT,
-            password_hash   TEXT NOT NULL,
-            blood_group     TEXT NOT NULL,           -- e.g. 'O+', 'AB-'
-            platelet_count  INTEGER,                 -- optional, in lakhs/cumm, nullable
-            is_nss_volunteer INTEGER NOT NULL DEFAULT 0,  -- 1 = yes, 0 = no
-            location_name   TEXT NOT NULL,
-            latitude        REAL NOT NULL,
-            longitude       REAL NOT NULL,
-            available       INTEGER NOT NULL DEFAULT 1,   -- donor can pause themselves
-            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-    """)
-
-    # ---- PATIENT BLOOD REQUESTS ----
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS patient_requests (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            patient_name        TEXT NOT NULL,
-            blood_group_needed  TEXT NOT NULL,
-            units_needed        INTEGER NOT NULL DEFAULT 1,
-            hospital_name       TEXT NOT NULL,
-            location_name       TEXT NOT NULL,
-            latitude            REAL NOT NULL,
-            longitude           REAL NOT NULL,
-            urgency             TEXT NOT NULL DEFAULT 'High',  -- Critical / High / Normal
-            contact_mobile      TEXT NOT NULL,
-            status              TEXT NOT NULL DEFAULT 'searching', -- searching / fulfilled / cancelled
-            created_at          TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-    """)
-
-    # ---- ALERTS: one row per (patient request, matched donor) pair ----
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS alerts (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            patient_id      INTEGER NOT NULL REFERENCES patient_requests(id),
-            donor_id        INTEGER NOT NULL REFERENCES donors(id),
-            distance_km     REAL NOT NULL,
-            status          TEXT NOT NULL DEFAULT 'pending',  -- pending / accepted / declined
-            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-            responded_at    TEXT
-        )
-    """)
-
-    conn.commit()
-    conn.close()
+    Base.metadata.create_all(bind=engine)

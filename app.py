@@ -113,57 +113,122 @@ def notify_requester(db, patient_request, title, body, kind="request_update", al
 
 
 def dispatch_next_wave(db, patient_request, matches):
+    """Create alerts for every supplied match, closest first.
+
+    Initial requests deliberately notify ALL compatible, available donors within
+    SEARCH_RADIUS_KM. The 25-minute escalation is a reminder to those still
+    pending plus a sweep for newly registered/available donors; it does not
+    silently keep eligible donors out of the first alert.
+    """
     created = []
-    for match in matches[:ESCALATION_BATCH_SIZE]:
+    for match in matches:
+        # The unique (request, donor) constraint prevents duplicate alert rows.
+        existing = db.scalar(select(Alert.id).where(
+            Alert.patient_id == patient_request.id,
+            Alert.donor_id == match["donor"].id,
+        ))
+        if existing:
+            continue
         alert = Alert(patient_id=patient_request.id, donor_id=match["donor"].id,
                       distance_km=match["distance_km"], status="pending")
         db.add(alert)
         db.flush()
         created.append(alert)
-        notify_donor(db, alert,
-                     f"Urgent {patient_request.blood_group_needed} blood request nearby",
-                     f"{patient_request.patient_name} needs {patient_request.blood_group_needed} blood at {patient_request.hospital_name} ({match['distance_km']} km away). Sign in to respond.")
+        notify_donor(
+            db, alert,
+            f"Urgent {patient_request.blood_group_needed} blood request nearby",
+            f"{patient_request.patient_name} needs {patient_request.blood_group_needed} blood at "
+            f"{patient_request.hospital_name} ({match['distance_km']} km away). "
+            "Sign in to respond.",
+        )
     return created
 
 
 def process_escalations(now=None):
-    """Send the next donor wave 25 minutes after the latest unconfirmed alert."""
+    """Enforce the 25-minute confirmation timer and notify late/new matches."""
     now = now or utcnow()
     escalated = 0
     with SessionLocal() as db:
-        requests = db.scalars(select(PatientRequest).where(PatientRequest.status == "searching")).all()
+        requests = db.scalars(
+            select(PatientRequest).where(PatientRequest.status == "searching")
+        ).all()
         for patient_request in requests:
-            alerts = db.scalars(select(Alert).where(Alert.patient_id == patient_request.id)).all()
-            active = [a for a in alerts if a.status in ("pending", "accepted") and a.confirmed_at is None]
-            if not active:
-                # Keep searching when no responders remain or no match existed at request time.
-                excluded = {a.donor_id for a in alerts}
-                new_alerts = dispatch_next_wave(
-                    db, patient_request,
-                    donor_matches(db, patient_request, excluded)[:INITIAL_ALERT_BATCH],
-                )
-                if new_alerts:
-                    notify_requester(
-                        db, patient_request, "A nearby donor is now available",
-                        "A newly available compatible donor has been notified about your request.",
-                        kind="escalation",
+            alerts = db.scalars(
+                select(Alert).where(Alert.patient_id == patient_request.id)
+            ).all()
+
+            # If a donor accepted but did not confirm they are on the way within
+            # 25 minutes, expire that acceptance and re-alert every other donor
+            # whose alert is still pending. They were included in the initial
+            # broadcast; this second notification is the explicit escalation.
+            overdue_acceptances = [
+                alert for alert in alerts
+                if alert.status == "accepted"
+                and alert.confirmed_at is None
+                and alert.accepted_at is not None
+                and now - alert.accepted_at >= timedelta(minutes=25)
+            ]
+            if overdue_acceptances:
+                for alert in overdue_acceptances:
+                    alert.status = "expired"
+                    alert.donor.available = True
+
+                pending_alerts = [
+                    alert for alert in alerts
+                    if alert.status == "pending"
+                    and alert.donor.available
+                ]
+                for alert in pending_alerts:
+                    # Only send one escalation reminder per existing alert to
+                    # avoid sending another message every 30-second scheduler run.
+                    already_escalated = db.scalar(
+                        select(Notification.id).where(
+                            Notification.alert_id == alert.id,
+                            Notification.kind == "escalation",
+                        ).limit(1)
                     )
-                    escalated += len(new_alerts)
+                    if already_escalated is None:
+                        donor_account = db.get(Account, alert.donor.account_id)
+                        if donor_account:
+                            create_notification(
+                                db, donor_account,
+                                f"Escalated {patient_request.blood_group_needed} blood request",
+                                f"The earlier response has not been confirmed within 25 minutes. "
+                                f"The request at {patient_request.hospital_name} is still searching. "
+                                "Please open RaktaSetu to respond if you can help.",
+                                kind="escalation", patient_id=patient_request.id,
+                                alert_id=alert.id,
+                            )
+                            escalated += 1
+
+                # Also pick up donors who registered, moved into range, or became
+                # available after the initial broadcast.
+                already_alerted = {alert.donor_id for alert in alerts}
+                new_matches = donor_matches(db, patient_request, already_alerted)
+                new_alerts = dispatch_next_wave(db, patient_request, new_matches)
+                notify_requester(
+                    db, patient_request, "Blood request escalated",
+                    f"A donor did not confirm within 25 minutes. Other pending donors were re-notified "
+                    f"and {len(new_alerts)} newly eligible donor(s) were alerted within "
+                    f"{SEARCH_RADIUS_KM} km.",
+                    kind="escalation",
+                )
+                escalated += len(new_alerts)
                 continue
-            anchor = max((a.accepted_at or a.created_at) for a in active)
-            if now - anchor < timedelta(minutes=25):
-                continue
-            already_alerted = {a.donor_id for a in alerts}
-            matches = donor_matches(db, patient_request, already_alerted)
-            for alert in active:
-                alert.status = "expired"
-            next_alerts = dispatch_next_wave(db, patient_request, matches)
-            notify_requester(db, patient_request, "Still searching for a donor",
-                             f"No donor confirmed within 25 minutes. RaktaSetu has alerted the next {len(next_alerts)} eligible donor(s) within {SEARCH_RADIUS_KM} km.", kind="escalation")
-            if next_alerts:
-                escalated += len(next_alerts)
-            else:
-                logger.info("No unalerted matching donors remain for request %s", patient_request.id)
+
+            # New or newly available donors should receive a request alert even
+            # if the request already has other pending alerts.
+            already_alerted = {alert.donor_id for alert in alerts}
+            new_matches = donor_matches(db, patient_request, already_alerted)
+            new_alerts = dispatch_next_wave(db, patient_request, new_matches)
+            if new_alerts:
+                notify_requester(
+                    db, patient_request, "A nearby donor is now available",
+                    f"{len(new_alerts)} newly eligible donor(s) were notified within "
+                    f"{SEARCH_RADIUS_KM} km.",
+                    kind="escalation",
+                )
+                escalated += len(new_alerts)
         db.commit()
     return escalated
 
